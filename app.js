@@ -1,10 +1,17 @@
 /**
- * This script is intended to be a server to be used with front-end app: https://github.com/alex-dulac/rsvp-app
+ * This script is intended to be a server for use with front-end app: https://github.com/alex-dulac/rsvp-app
  *
- * It authenticates an oauth client to be used with google drive.
+ * It authenticates an oauth client to be used with google drive api.
  * The idea is that after the event that folks RSVP'd to,
- * they can visit the site again and see all public pictures uploaded to drive.
+ * they can visit the site again and see all public pictures uploaded to drive without having to deal with drive UI.
  *
+ * Also, just for fun, because I don't want to retire the event site just yet.
+ *
+ * It's a mess right now.
+ * Thanks for coming to my TED talk.
+ */
+
+ /**
  * General app setup
  */
 import { createRequire } from "module";
@@ -12,12 +19,12 @@ const require = createRequire(import.meta.url);
 
 require('dotenv').config();
 
-const axios = require('axios');
 const request = require('request');
 const cors = require('cors');
-const urlParse = require('url-parse');
-import * as queryParse from 'querystring';
 const bodyParser = require('body-parser');
+const fs = require('fs');
+const process = require('process');
+const path = require('path');
 
 /**
  * Express app
@@ -31,23 +38,18 @@ app.listen(port, () => {});
  * Google API integration
  */
 const { google } = require('googleapis');
-const fs = require('fs').promises;
-const process = require('process');
-const opn = require('opn');
-const os = require('os');
-const uuid = require('uuid');
-const path = require('path');
-const { authenticate } = require('@google-cloud/local-auth');
+const { GoogleAuth } = require('google-auth-library');
 
 /**
  * Globals
  */
 const SCOPES = ['https://www.googleapis.com/auth/drive'];
 const TOKEN_PATH = path.join(process.cwd(), 'token.json');
-const CREDENTIALS_PATH = path.join(process.cwd(), 'credentials.json');
 const CLIENT_ID = process.env.GOOGLE_API_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_API_CLIENT_SECRET;
 const REDIRECT_URI = process.env.GOOGLE_API_REDIRECT_URI;
+const APP_PASSWORD = process.env.APP_PASSWORD;
+const APP_BASE_URL = process.env.APP_BASE_URL;
 
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -57,53 +59,56 @@ app.use(bodyParser.json());
  * Verify password (one password for all users as determined by .env value)
  */
 app.get('/login', function (req, res) {
-    const appPassword = process.env.APP_PASSWORD;
     const input = req.body?.input;
-    const correctPassword = input === appPassword;
+    const correctPassword = input === APP_PASSWORD;
     res.json({correctPassword: correctPassword});
+    // authorize on log in?
 });
 
 /**
  * Get photos from google drive
  */
-app.get('/photos', function (req, res) {
-    const fileIds = getFileIds();
-    res.send(fileIds);
-    //res.json({fileIds: fileIds});
+app.get('/photos', async function (req, res) {
+    const drive = google.drive({
+        version: 'v3',
+        auth: process.env.GOOGLE_API_KEY
+    })
+
+    // drive....
 });
 
 /**
- * Authorize google api for use
+ * Everything below this is faulty at best.
  */
-app.get('/authorize', function (req, res) {
-    if (bypassAuth()) {
-        return;
-    }
 
+/**
+ * Authorize oauth2 client for use with google api
+ */
+app.get('/authorize', async function (req, res) {
     const oauth2Client = getOAuth2Client();
     const url = oauth2Client.generateAuthUrl({
         access_type: "offline",
         scope: SCOPES,
         state: JSON.stringify({
-            callbackUrl: process.env.GOOGLE_API_REDIRECT_URL,
+            callbackUrl: REDIRECT_URI,
         })
     });
 
     request(url, (error, response, body) => {
+        console.log("token url: " + url);
         res.sendStatus(200);
     });
 });
 
 /**
- * Get a refresh token on redirect
+ * Get and save refresh token after authorize redirect
  */
 app.get('/tokens', async function (req, res) {
-    const url = new URL(process.env.APP_BASE_URL + req.url);
-    const code = url.searchParams.get('code'); // 'code' is the refresh token
-
+    const url = new URL(APP_BASE_URL + req.url);
+    const code = url.searchParams.get('code');
     const oauth2Client = getOAuth2Client();
     const tokens = await oauth2Client.getToken(code);
-    console.log(tokens);
+    saveCredentials(tokens);
 });
 
 function getOAuth2Client() {
@@ -114,95 +119,50 @@ function getOAuth2Client() {
     );
 }
 
-/**
- * TODO
- * We can skip authing with google if a valid refresh token is available
- */
-function bypassAuth() {
-    return false;
+function saveCredentials(tokens) {
+    const payload = JSON.stringify({
+        type: 'authorized_user',
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        access_token: tokens.tokens.access_token,
+    });
+    fs.writeFileSync(TOKEN_PATH, payload, (error) => {
+        if (error) {
+            console.error(error);
+        }
+        console.log("token.json has been updated.")
+    });
 }
 
 /**
- * Testing...
+ * We can skip authorization if we already have an access token
  */
-app.get('/authorize-3000', function (req, res) {
-    const oauth2Client = getOAuth2Client();
-
-    const url = oauth2Client.generateAuthUrl({
-        access_type: "offline",
-        scope: SCOPES,
-        state: JSON.stringify({
-            callbackUrl: process.env.GOOGLE_API_REDIRECT_URL,
-        })
-    });
-
-    request(url, (error, response, body) => {
-        res.send(url);
-    });
-});
-
-/**
- * Testing...
- */
-app.get('/tokens-3000', async function (req, res) {
-    const queryUrl = new urlParse(req.url);
-    console.log(queryUrl);
-    const code = queryParse.parse(queryUrl.query).code;
-
-    const oauth2Client = getOAuth2Client();
-
-    const tokens = await oauth2Client.getToken(code);
-    console.log(tokens);
-});
-
-/**
- * test endpoint using google's quickstart guide: https://github.com/googleworkspace/node-samples/blob/main/drive/quickstart/index.js
- * https://developers.google.com/drive/api/quickstart/nodejs
- */
-app.get('/authorize-testing', function (req, res) {
-    authorize().then(listFiles).catch(console.error);
-});
-
-async function loadSavedCredentialsIfExist() {
+async function getAccessToken() {
     try {
         const content = await fs.readFile(TOKEN_PATH);
-        const credentials = JSON.parse(content.toString());
-        return google.auth.fromJSON(credentials);
+        const credentials = JSON.parse(content);
+        return credentials.access_token ?? null;
     } catch (err) {
         return null;
     }
 }
 
-async function saveCredentials(client) {
-    const content = await fs.readFile(CREDENTIALS_PATH);
-    const keys = JSON.parse(content.toString());
-    const key = keys.web;
-    const payload = JSON.stringify({
-        type: 'authorized_user',
-        client_id: key.client_id,
-        client_secret: key.client_secret,
-        refresh_token: client.credentials.refresh_token,
-    });
-    await fs.writeFile(TOKEN_PATH, payload);
-}
+/**
+ * Test endpoint to get files list directly using GoogleAuth
+ * work-in-progress
+ */
+app.get('/google-auth-test', async function (req, res) {
+    const auth = new GoogleAuth({
+        scopes: SCOPES
+    })
+    const client = auth.getClient();
+    const projectId = auth.getProjectId();
+    const url = `https://dns.googleapis.com/dns/v1/projects/${projectId}`;
+    const response = await client.request({ url });
+    console.log(response.data);
+});
 
-async function authorize() {
-    let client = await loadSavedCredentialsIfExist();
-    if (client) {
-        return client;
-    }
-    client = await authenticate({
-        scopes: SCOPES,
-        keyfilePath: CREDENTIALS_PATH,
-    });
-    if (client.credentials) {
-        await saveCredentials(client);
-    }
-    return client;
-}
-
-async function listFiles(authClient) {
-    const drive = google.drive({version: 'v3', auth: authClient});
+async function listFiles(drive) {
     const res = await drive.files.list({
         pageSize: 10,
         fields: 'nextPageToken, files(id, name)',
@@ -218,3 +178,13 @@ async function listFiles(authClient) {
         console.log(`${file.name} (${file.id})`);
     });
 }
+
+function useApiKey() {
+    const drive = google.drive({
+        version: 'v3',
+        auth: process.env.GOOGLE_API_KEY
+    })
+    return listFiles();
+}
+
+// useApiKey().then(() => {});
