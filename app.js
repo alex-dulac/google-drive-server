@@ -1,15 +1,7 @@
 /**
  * This script is intended to be a server for use with front-end app: https://github.com/alex-dulac/rsvp-app
  *
- * It authenticates an oauth client to be used with google drive api.
- * The idea is that after the event that folks RSVP'd to,
- * they can visit the site again and see all public pictures uploaded to drive without having to deal with drive UI.
- *
- * Also, just for fun, because I don't want to retire the event site just yet.
- *
- * It's a mess right now.
- * Thanks for coming to my TED talk.
- */
+ * This is primary just for fun, because I don't want to retire the event site just yet.
 
  /**
  * General app setup
@@ -50,6 +42,7 @@ const CLIENT_SECRET = process.env.GOOGLE_API_CLIENT_SECRET;
 const REDIRECT_URI = process.env.GOOGLE_API_REDIRECT_URI;
 const APP_PASSWORD = process.env.APP_PASSWORD;
 const APP_BASE_URL = process.env.APP_BASE_URL;
+const DRIVE_IMAGE_URL = 'https://lh3.googleusercontent.com/d/'
 
 app.use(cors());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -62,23 +55,52 @@ app.get('/login', function (req, res) {
     const input = req.body?.input;
     const correctPassword = input === APP_PASSWORD;
     res.json({correctPassword: correctPassword});
-    // authorize on log in?
 });
 
 /**
- * Get photos from google drive
+ * Get all photos from a specified google drive folder
  */
-app.get('/photos', async function (req, res) {
+app.get('/getFilesByFolder', async function (req, res) {
     const drive = google.drive({
         version: 'v3',
         auth: process.env.GOOGLE_API_KEY
     })
 
-    // drive....
+    const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID; //polaroids
+    const apiResponse = await drive.files.list({
+        q: `'${folderId}' in parents`,
+        fields: 'nextPageToken, files(id)',
+    });
+
+    let imageLinks = [];
+    apiResponse.data.files.forEach(file => {
+        const url = DRIVE_IMAGE_URL + file.id;
+        imageLinks.push(url);
+    });
+
+    res.json({imageLinks: imageLinks});
 });
 
 /**
- * Everything below this is faulty at best.
+ * Get specified file from google drive
+ */
+app.get('/getFile', async function (req, res) {
+    const drive = google.drive({
+        version: 'v3',
+        auth: process.env.GOOGLE_API_KEY
+    })
+
+    const fileId = ''; // put your file ID here
+    const apiResponse = await drive.files.get({
+        fileId: fileId,
+        alt: 'media',
+    });
+
+    res.json(apiResponse.data);
+});
+
+/**
+ * Everything below this isn't reliable. Just tinkering with other ways to authorize
  */
 
 /**
