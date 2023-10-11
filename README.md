@@ -1,11 +1,9 @@
-# rsvp-server
+# google-drive-server
 
-Small backend app to use with: https://github.com/alex-dulac/rsvp-app
+Small simple backend app to use with: https://github.com/alex-dulac/rsvp-app
 
-It authenticates an oauth client to be used with a Google Cloud API Service: https://console.cloud.google.com/apis
-
-Features:
-- Node
+Things it uses:
+- Node.js
 - Express
 - Googleapis
 - Oauth2
